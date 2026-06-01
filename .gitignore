@@ -1,0 +1,23 @@
+# Entornos virtuales Python
+**/venv/
+**/venv-train/
+
+# Dependencias Node
+**/node_modules/
+
+# Cache Python
+**/__pycache__/
+*.pyc
+
+# Secretos / entorno
+**/.env
+
+# Modelo wake-word: datos de audio, checkpoints y entorno de entrenamiento
+wakeword-model/data/
+wakeword-model/*.pt
+
+# Archivos de raíz que no forman parte del entregable
+/README.md
+/prompt-presentacion.md
+/start-gateway.ps1
+/design/

@@ -1,0 +1,7 @@
+# Dependencias del ENTORNO DE ENTRENAMIENTO (Python 3.12, aparte del backend).
+# PyTorch con CUDA se instala con su index propio; ver README.md de esta carpeta:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+numpy
+sounddevice
+av
+onnx

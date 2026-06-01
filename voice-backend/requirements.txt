@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+websockets
+faster-whisper
+pyautogui
+pynput
+python-dotenv
+
+# Librerías CUDA para Whisper en GPU (WHISPER_DEVICE=cuda). Si solo usas CPU
+# (WHISPER_DEVICE=cpu) puedes omitirlas. main.py las registra en el PATH al arrancar.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+nvidia-cuda-runtime-cu12

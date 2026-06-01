@@ -1,0 +1,16 @@
+{
+  "name": "desktop-ui",
+  "version": "1.0.0",
+  "description": "Mascota de escritorio (Electron) para el asistente de voz Solobino.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "latest"
+  }
+}

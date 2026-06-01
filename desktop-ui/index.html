@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solobino · Asistente</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=Funnel+Display:wght@300..800&family=Funnel+Sans:wght@300..800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Indicador de wake word / conexión (esquina) -->
+  <div id="wake-pill" class="wake-pill paused">
+    <span class="wp-dot"></span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </svg>
+    <span id="wake-pill-text">CONECTANDO…</span>
+  </div>
+
+  <!-- Overlay flotante de Solobino -->
+  <div id="solo-root" class="solo-root sleeping">
+    <div id="drag-handle" class="solo-drag-handle"></div>
+
+    <!-- Bocadillo HUD (se reconstruye por estado en renderer.js) -->
+    <div id="hud" class="hud hidden"></div>
+
+    <!-- Mascota + visualizaciones -->
+    <div style="position: relative;">
+      <div id="audio-ring" class="audio-ring hidden">
+        <div class="ring"></div><div class="ring"></div><div class="ring"></div>
+      </div>
+      <div id="sparkles" class="sparkles hidden">
+        <span>✦</span><span>✶</span><span>✦</span><span>✶</span>
+      </div>
+      <div id="mascot" class="mascot mascot-breathe">
+        <img class="pixel" id="mascot-img" src="assets/mascot/idle/idle1.png" alt="Solobino" />
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
