@@ -12,6 +12,10 @@
 # Secretos / entorno
 **/.env
 
+# Estado, credenciales y salidas de las pruebas locales de Solobino.
+/.local-solobino/
+/local-model-results/
+
 # Modelo wake-word: datos de audio, checkpoints y entorno de entrenamiento
 wakeword-model/data/
 wakeword-model/*.pt

@@ -6,6 +6,7 @@ import difflib
 import functools
 import json
 import os
+import sys
 import re
 import tempfile
 import time
@@ -60,8 +61,11 @@ except ImportError:
     # python-dotenv is optional. Environment variables still work without it.
     pass
 
-from agentic_control import PCController
+from agentic_control import PCController, app_index
+from mcp_client import MCPToolset
+from tools import ToolRunner
 from wakeword_infer import WakeWordDetector
+from local_agent import OllamaAgent
 
 # `features.load_audio` (de wakeword-model/) decodifica webm/opus a PCM mono float32 a 16 kHz
 # usando PyAV. Lo reusamos como gate de energía para descartar segmentos silenciosos
@@ -75,9 +79,12 @@ except Exception as _e:
 
 
 # --- Configuration & Globals ---
-MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "medium")
-WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
-WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
+# En macOS no hay CUDA: faster-whisper corre en CPU con int8, y un modelo
+# grande dispararía la latencia. El .env puede sobrescribir cualquiera de los tres.
+_IS_MACOS = sys.platform == "darwin"
+MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small" if _IS_MACOS else "medium")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu" if _IS_MACOS else "cuda")
+WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE_TYPE", "int8" if _IS_MACOS else "float16")
 
 
 def _load_whisper() -> WhisperModel:
@@ -113,6 +120,8 @@ _whisper_pool = concurrent.futures.ThreadPoolExecutor(
 )
 
 pc_controller = PCController()
+tool_runner = ToolRunner(pc_controller)
+mcp_tools = MCPToolset()
 
 # Detector de wake-word con la CNN propia (ONNX). Si no hay modelo entrenado,
 # `available` es False y se usa Whisper + regex como fallback.
@@ -931,23 +940,54 @@ class OpenClawGatewayClient:
 
 
 openclaw_client = OpenClawGatewayClient()
+AGENT_PROVIDER = os.getenv("AGENT_PROVIDER", "ollama").strip().lower()
+if AGENT_PROVIDER not in {"ollama", "openclaw"}:
+    raise ValueError("AGENT_PROVIDER debe ser ollama u openclaw")
+local_agent = OllamaAgent(
+    model=os.getenv("OLLAMA_MODEL", "qwen3.5:4b"),
+    base_url=os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+    tool_runner=tool_runner,
+    mcp_tools=mcp_tools,
+)
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    openclaw_task = asyncio.create_task(openclaw_client.start())
+    openclaw_task = None
+    if AGENT_PROVIDER == "openclaw":
+        openclaw_task = asyncio.create_task(openclaw_client.start())
+    else:
+        try:
+            await local_agent.warmup()
+            print(f"[Ollama] Modelo listo: {local_agent.model}")
+        except Exception as e:
+            print(f"[Ollama] No se pudo precargar el modelo: {e}")
+        # Indexar aquí evita pagar el escaneo en la primera orden del usuario.
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(app_index.entries)
+        await mcp_tools.start()
 
     try:
         yield
     finally:
-        await openclaw_client.stop()
-        openclaw_task.cancel()
-
-        with contextlib.suppress(asyncio.CancelledError):
-            await openclaw_task
+        if openclaw_task is not None:
+            await openclaw_client.stop()
+            openclaw_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await openclaw_task
+        await local_agent.close()
+        await tool_runner.close()
+        with contextlib.suppress(Exception):
+            await mcp_tools.close()
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "agent_provider": AGENT_PROVIDER,
+            "model": local_agent.model if AGENT_PROVIDER == "ollama" else openclaw_client.openclaw_model}
 
 app.add_middleware(
     CORSMiddleware,
@@ -970,14 +1010,42 @@ def save_audio_chunk(data: bytes) -> str:
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     print("Electron client connected.")
+    history = []
+    local_task = None
+
+    async def local_command(audio):
+        try:
+            async with asyncio.timeout(45):
+                started = time.perf_counter()
+                text = await _transcribe_async(audio, "es")
+                print(f"[Voice] STT={time.perf_counter() - started:.3f}s")
+                if not text or _is_hallucination(text):
+                    await websocket.send_json({"type": "agent_error", "text": "No escuché un comando. Inténtalo de nuevo."})
+                    return
+                await websocket.send_json({"type": "transcription", "text": text})
+                await local_agent.reply(text, history, websocket.send_json)
+        except WebSocketDisconnect:
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[Ollama] Turn failed: {type(e).__name__}: {e}")
+            with contextlib.suppress(Exception):
+                await websocket.send_json({"type": "agent_error", "text": "No pude completar la respuesta local. Comprueba que Ollama esté iniciado e inténtalo otra vez."})
 
     try:
         while True:
             message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
 
             if "bytes" in message and message["bytes"] is not None:
                 audio_data = message["bytes"]
                 print(f"Received audio chunk: {len(audio_data)} bytes")
+                if AGENT_PROVIDER == "ollama":
+                    if local_task is None or local_task.done():
+                        local_task = asyncio.create_task(local_command(audio_data))
+                    continue
 
                 try:
                     # PCM directo: ahorra tempfile + I/O. Pool dedicado de Whisper.
@@ -1009,7 +1077,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     continue
 
+                if not isinstance(data, dict):
+                    continue
+                if data.get("type") == "cancel" and AGENT_PROVIDER == "ollama":
+                    if local_task and not local_task.done():
+                        local_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await local_task
+                    continue
+
                 if data.get("type") == "wake_word_check":
+                    if local_task and not local_task.done():
+                        continue
                     audio_b64 = data.get("audio")
                     if not audio_b64:
                         continue
@@ -1070,7 +1149,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 # Fallback for manual agentic commands from UI directly.
                 elif data.get("action") == "control_pc":
-                    result = pc_controller.execute_command(
+                    # Pasa por la misma validación que las herramientas del modelo.
+                    result = await tool_runner.run(
                         data.get("command"),
                         data.get("params", {}),
                     )
@@ -1084,6 +1164,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except Exception as e:
         print(f"WebSocket error: {e}")
+        manager.disconnect(websocket)
+    finally:
+        if local_task and not local_task.done():
+            local_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await local_task
         manager.disconnect(websocket)
 
 

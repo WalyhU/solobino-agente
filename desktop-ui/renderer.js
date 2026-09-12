@@ -376,10 +376,11 @@ function connectWebSocket() {
       console.log("[Solobino] escuchado:", data.text);
       streamingBuf = "";
       setState("think");
+      armResponseWatchdog();
     } else if (data.type === "agent_delta") {
       // Trozo incremental: TTFT bajo. Cambia a talk en el primer delta y va
       // renderizando texto sin esperar al final.
-      clearWatchdog();
+      armResponseWatchdog();
       streamingBuf += data.text || "";
       if (currentState !== "talk") setState("talk", { text: "" });
       setBubbleText(streamingBuf);
@@ -387,11 +388,13 @@ function connectWebSocket() {
       // Texto final. Renderiza markdown directamente (no typewriter para que negrita,
       // listas, código se vean correctos en lugar de letra-a-letra escapado).
       clearWatchdog();
-      const finalText = (data.text && data.text.length >= streamingBuf.length) ? data.text : streamingBuf;
+      const finalText = typeof data.text === "string" ? data.text : streamingBuf;
       streamingBuf = "";
       if (currentState !== "talk") setState("talk", { text: "" });
       setBubbleText(finalText);
       restAfterTalk();
+    } else if (data.type === "agent_error") {
+      showAgentError(data.text || "No pude completar la respuesta.");
     } else if (data.type === "wake_word_detected") {
       activate();
     }
@@ -400,6 +403,9 @@ function connectWebSocket() {
   ws.onclose = () => {
     setWakePill(false);
     stopContinuousListening();
+    if (currentState === "think" || currentState === "talk") {
+      showAgentError("Se perdió la conexión. Intentando reconectar…");
+    }
     setTimeout(connectWebSocket, 3000);
   };
 }
@@ -410,6 +416,22 @@ function connectWebSocket() {
 let responseWatchdog = null;
 function clearWatchdog() {
   if (responseWatchdog) { clearTimeout(responseWatchdog); responseWatchdog = null; }
+}
+
+function showAgentError(text) {
+  clearWatchdog();
+  streamingBuf = "";
+  setState("error", { text });
+  currentState = "resting";
+  if (ws && ws.readyState === WebSocket.OPEN) startContinuousListening();
+}
+
+function armResponseWatchdog() {
+  clearWatchdog();
+  responseWatchdog = setTimeout(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "cancel" }));
+    showAgentError("La respuesta tardó demasiado. Inténtalo de nuevo.");
+  }, 25000);
 }
 
 function activate() {
@@ -464,9 +486,12 @@ async function startCommandRecording() {
     const opts = MediaRecorder.isTypeSupported(REC_OPTS.mimeType) ? REC_OPTS : { mimeType: "audio/webm" };
     mediaRecorder = new MediaRecorder(stream, opts);
     audioChunks = [];
+    const recorder = mediaRecorder;
+    let commandTimer = null;
 
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
     mediaRecorder.onstop = () => {
+      clearTimeout(commandTimer);
       const blob = new Blob(audioChunks, { type: "audio/webm" });
       if (blob.size > 0) {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -488,7 +513,7 @@ async function startCommandRecording() {
       }
     });
     // Cap duro por si nunca se detecta silencio.
-    setTimeout(() => { if (isRecording) mediaRecorder.stop(); }, COMMAND_MAX_MS);
+    commandTimer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, COMMAND_MAX_MS);
   } catch (err) {
     console.error("Error micrófono:", err);
     setState("error");

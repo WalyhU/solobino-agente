@@ -1,0 +1,5 @@
+# Normalización de fin de línea: los scripts de shell deben llegar al Mac con LF,
+# o bash falla con "\r: command not found".
+* text=auto
+*.sh text eol=lf
+*.ps1 text eol=crlf

@@ -5,6 +5,7 @@ faster-whisper
 pyautogui
 pynput
 python-dotenv
+httpx>=0.28,<1
 
 # Librerías CUDA para Whisper en GPU (WHISPER_DEVICE=cuda). Si solo usas CPU
 # (WHISPER_DEVICE=cpu) puedes omitirlas. main.py las registra en el PATH al arrancar.

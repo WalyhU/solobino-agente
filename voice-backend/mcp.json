@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "archivos": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "~/Desktop",
+        "~/Documents",
+        "~/Downloads"
+      ],
+      "allowedTools": [
+        "write_file",
+        "read_text_file",
+        "edit_file",
+        "create_directory",
+        "list_directory",
+        "move_file",
+        "search_files"
+      ]
+    }
+  }
+}
