@@ -16,7 +16,9 @@ if IS_MACOS:
 else:
     mac_desktop = None
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "ui-invoke.ps1"
+SCRIPT = (Path(getattr(sys, "_MEIPASS")) / "scripts" / "ui-invoke.ps1"
+          if getattr(sys, "frozen", False) else
+          Path(__file__).resolve().parent.parent / "scripts" / "ui-invoke.ps1")
 DEFAULT_TIMEOUT_S = 18
 
 

@@ -1,0 +1,60 @@
+name: Cliente Solobino
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'desktop-ui/**'
+      - 'voice-backend/client_tools.py'
+      - 'voice-backend/tools.py'
+      - 'voice-backend/agentic_control.py'
+      - 'voice-backend/app_index.py'
+      - 'voice-backend/mac_desktop.py'
+      - 'voice-backend/ui_automation.py'
+      - 'voice-backend/music_search.py'
+      - 'voice-backend/wakeword_infer.py'
+      - 'wakeword-model/features.py'
+      - 'wakeword-model/wakeword.onnx'
+      - 'wakeword-model/wakeword_meta.json'
+      - 'scripts/ui-invoke.ps1'
+      - '.github/workflows/client-installers.yml'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop-ui/package-lock.json
+      - run: python -m pip install -r desktop-ui/client-requirements.txt
+      - run: python -m unittest discover -s tests -p test_remote_tools.py -v
+      - run: python -m unittest discover -s tests -p test_client_tools.py -v
+      - name: Empaquetar herramientas Windows
+        if: runner.os == 'Windows'
+        run: python -m PyInstaller --noconfirm --onedir --name solobino-tools --distpath desktop-ui/bin --workpath build/helper --specpath . --paths wakeword-model --add-data "wakeword-model/wakeword.onnx;wakeword-model" --add-data "wakeword-model/wakeword_meta.json;wakeword-model" --add-data "scripts/ui-invoke.ps1;scripts" voice-backend/client_tools.py
+      - name: Empaquetar herramientas macOS
+        if: runner.os == 'macOS'
+        run: python -m PyInstaller --noconfirm --onedir --name solobino-tools --distpath desktop-ui/bin --workpath build/helper --specpath . --paths wakeword-model --add-data "wakeword-model/wakeword.onnx:wakeword-model" --add-data "wakeword-model/wakeword_meta.json:wakeword-model" voice-backend/client_tools.py
+      - run: node --test test-helper.cjs
+        working-directory: desktop-ui
+      - run: npm ci
+        working-directory: desktop-ui
+      - run: node --test test-streaming.cjs
+        working-directory: desktop-ui
+      - run: node --test test-wake.cjs
+        working-directory: desktop-ui
+      - run: npm run dist
+        working-directory: desktop-ui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solobino-${{ matrix.os }}
+          path: desktop-ui/dist/*

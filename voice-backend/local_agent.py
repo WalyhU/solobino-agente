@@ -37,20 +37,21 @@ class OllamaAgent:
         self.mcp = mcp_tools
         self._slot = asyncio.Semaphore(1)
 
-    def _system_prompt(self):
+    def _system_prompt(self, remote_tools=None):
         """Añade las rutas reales: sin ellas el modelo inventa rutas relativas."""
-        paths = self.mcp.writable_paths() if self.mcp else []
+        paths = remote_tools.writable_paths() if remote_tools else (self.mcp.writable_paths() if self.mcp else [])
         if not paths:
             return SYSTEM_PROMPT
         return (SYSTEM_PROMPT + " Usa siempre rutas absolutas de Windows. "
                 "Carpetas disponibles: " + ", ".join(paths) + ".")
 
-    def _body(self, messages, with_tools=True):
+    def _body(self, messages, with_tools=True, remote_tools=None):
         body = dict(model=self.model, messages=messages, think=False, stream=True,
                     keep_alive="15m",
                     options=dict(num_ctx=8192, num_predict=256, temperature=0.3))
         if with_tools:
-            body['tools'] = TOOL_SPECS + (self.mcp.specs() if self.mcp else [])
+            body['tools'] = (remote_tools.specs() if remote_tools else
+                             TOOL_SPECS + (self.mcp.specs() if self.mcp else []))
         return body
 
     async def warmup(self):
@@ -64,13 +65,13 @@ class OllamaAgent:
     async def close(self):
         await self.client.aclose()
 
-    async def _round(self, messages, emit, with_tools, parts, timing):
+    async def _round(self, messages, emit, with_tools, parts, timing, remote_tools=None):
         """Consume un turno de Ollama. Devuelve (texto, tool_calls, evento final)."""
         round_text = []
         tool_calls = []
         finished = None
         async with self.client.stream('POST', '/api/chat',
-                                      json=self._body(messages, with_tools)) as response:
+                                      json=self._body(messages, with_tools, remote_tools)) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line.strip():
@@ -92,7 +93,7 @@ class OllamaAgent:
                     break
         return ''.join(round_text), tool_calls, finished
 
-    async def reply(self, text, history, emit):
+    async def reply(self, text, history, emit, remote_tools=None):
         """Envía deltas y un evento final; solo confirma turnos completos.
 
         history pertenece a una única conexión WebSocket. Cancelar esta corrutina
@@ -101,7 +102,7 @@ class OllamaAgent:
         text = text.strip()
         if not text or len(text) > MAX_INPUT_CHARS:
             raise ValueError(f'El mensaje debe contener entre 1 y {MAX_INPUT_CHARS} caracteres.')
-        messages = [dict(role='system', content=self._system_prompt())]
+        messages = [dict(role='system', content=self._system_prompt(remote_tools))]
         messages.extend(history[-HISTORY_TURNS * 2:])
         messages.append(dict(role='user', content=text))
         timing = dict(started=time.perf_counter(), first=None)
@@ -115,7 +116,7 @@ class OllamaAgent:
                 # respuesta de texto en lugar de encadenar llamadas indefinidamente.
                 with_tools = attempt < MAX_TOOL_ROUNDS
                 round_text, tool_calls, finished = await self._round(
-                    messages, emit, with_tools, parts, timing)
+                    messages, emit, with_tools, parts, timing, remote_tools)
                 if not tool_calls:
                     break
                 messages.append(dict(role='assistant', content=round_text,
@@ -124,7 +125,9 @@ class OllamaAgent:
                     function = call.get('function', {})
                     name = function.get('name', '')
                     arguments = function.get('arguments')
-                    if self.mcp is not None and self.mcp.handles(name):
+                    if remote_tools is not None:
+                        result = await remote_tools.call(name, arguments)
+                    elif self.mcp is not None and self.mcp.handles(name):
                         result = await self.mcp.call(name, arguments)
                     else:
                         result = await self.tools.run(name, arguments)

@@ -31,7 +31,8 @@ class BackendTests(unittest.TestCase):
         }
         spec = importlib.util.spec_from_file_location('solobino_test_backend', BACKEND / 'main.py')
         self.backend = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, modules), patch.dict(os.environ, {'AGENT_PROVIDER':'ollama'}):
+        with patch.dict(sys.modules, modules), patch.dict(os.environ, {
+            'AGENT_PROVIDER': 'ollama', 'WAKE_FUZZY_RATIO': '0.90'}):
             spec.loader.exec_module(self.backend)
         # No connections were opened by the original client; close it explicitly.
         asyncio.run(self.backend.local_agent.close())
@@ -65,6 +66,28 @@ class BackendTests(unittest.TestCase):
             with client.websocket_connect('/ws') as ws:
                 ws.send_bytes(b'silence')
                 self.assertEqual(ws.receive_json()['type'], 'agent_error')
+
+    def test_local_wake_candidate_requires_unambiguous_whisper_confirmation(self):
+        self.backend._segment_has_voice = Mock(return_value=True)
+        self.assertFalse(self.backend._is_wake_word('solo vino'))
+        self.assertTrue(self.backend._is_wake_word('Solobino'))
+        with TestClient(self.backend.app) as client:
+            with client.websocket_connect('/ws') as ws:
+                self.backend._transcribe_async.return_value = 'solo vino'
+                ws.send_json({'type': 'wake_word_check', 'candidate_id': 'uno',
+                              'audio': 'UklGRg=='})
+                self.assertEqual(ws.receive_json(),
+                                 {'type': 'wake_word_rejected', 'candidate_id': 'uno'})
+                self.backend._transcribe_async.return_value = 'Solobino'
+                ws.send_json({'type': 'wake_word_check', 'candidate_id': 'dos',
+                              'audio': 'UklGRg=='})
+                self.assertEqual(ws.receive_json(),
+                                 {'type': 'wake_word_detected', 'candidate_id': 'dos'})
+            with client.websocket_connect('/ws') as other_ws:
+                other_ws.send_json({'type': 'wake_word_check', 'candidate_id': 'otro',
+                                    'audio': 'UklGRg=='})
+                self.assertEqual(other_ws.receive_json(),
+                                 {'type': 'wake_word_detected', 'candidate_id': 'otro'})
 
     def test_legacy_pc_command_goes_through_tool_validation(self):
         # El mensaje control_pc ya no llega crudo al controlador: pasa por el
@@ -102,6 +125,41 @@ class BackendTests(unittest.TestCase):
                 self.assertEqual(ws.receive_json()['type'], 'transcription')
                 self.assertTrue(started.wait(1))
             self.assertTrue(cancelled.wait(1))
+
+    def test_authenticated_client_executes_its_own_tool(self):
+        async def handler(req):
+            body = json.loads(req.content)
+            if not body['messages']:
+                return httpx.Response(200, json={'done': True})
+            if any(message['role'] == 'tool' for message in body['messages']):
+                return httpx.Response(200, text='\n'.join([
+                    json.dumps({'message': {'content': 'Listo.'}}),
+                    json.dumps({'done': True}),
+                ]))
+            return httpx.Response(200, text='\n'.join([
+                json.dumps({'message': {'tool_calls': [{
+                    'function': {'name': 'open_application',
+                                 'arguments': {'app_name': 'Calculadora'}}}]}}),
+                json.dumps({'done': True}),
+            ]))
+        self.backend.local_agent = OllamaAgent(transport=httpx.MockTransport(handler))
+        spec = {'type': 'function', 'function': {'name': 'open_application',
+                'parameters': {'type': 'object', 'properties': {'app_name': {'type': 'string'}}}}}
+        with patch.dict(os.environ, {'SOLOBINO_CLIENT_TOKEN': 'secreto-de-prueba'}):
+            with TestClient(self.backend.app) as client:
+                with client.websocket_connect('/ws') as ws:
+                    ws.send_json({'type': 'client_hello', 'token': 'secreto-de-prueba',
+                                  'tools': [spec], 'paths': []})
+                    ws.send_bytes(b'orden de prueba')
+                    self.assertEqual(ws.receive_json()['type'], 'transcription')
+                    call = ws.receive_json()
+                    self.assertEqual(call['type'], 'tool_request')
+                    self.assertEqual(call['name'], 'open_application')
+                    ws.send_json({'type': 'tool_result', 'id': call['id'], 'text': 'Abrí Calculadora.'})
+                    self.assertEqual(ws.receive_json()['type'], 'agent_tool')
+                    self.assertEqual(ws.receive_json()['type'], 'agent_delta')
+                    self.assertEqual(ws.receive_json()['text'], 'Listo.')
+        self.backend.pc_controller.execute_command.assert_not_called()
 
 
 if __name__ == '__main__':

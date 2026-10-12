@@ -4,13 +4,33 @@
   "description": "Mascota de escritorio (Electron) para el asistente de voz Solobino.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "electron": "latest"
+    "electron": "latest",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.solobino.desktop",
+    "productName": "Solobino",
+    "directories": { "output": "dist" },
+    "files": [
+      "main.js", "preload.js", "settings.html", "settings.js",
+      "index.html", "renderer.js", "wake-capture.js", "wake-worklet.js", "styles.css", "assets/mascot/**/*"
+    ],
+    "extraResources": [{ "from": "bin", "to": "bin", "filter": ["**/*"] }],
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": true },
+    "mac": { "target": "dmg", "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Solobino necesita el micrófono para escuchar tus comandos.",
+        "NSAppleEventsUsageDescription": "Solobino necesita controlar aplicaciones cuando se lo pidas."
+      }
+    }
   }
 }

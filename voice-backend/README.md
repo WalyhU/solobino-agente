@@ -1,5 +1,9 @@
 # Solobino: conversación local directa
 
+Para usar este backend como servicio central y clientes instalables en Windows y
+macOS, consulta [INSTALACION.md](../INSTALACION.md). Las instrucciones siguientes
+describen el modo local de desarrollo.
+
 El modo predeterminado conecta FastAPI directamente a Ollama, sin iniciar un
 cliente de OpenClaw. Usa Whisper para transcribir y envía `agent_delta` a Electron
 conforme se genera texto. `agent_response` finaliza el turno; `agent_error` permite
@@ -27,11 +31,10 @@ por conexión. Una desconexión o un mensaje `{"type":"cancel"}` cancela la peti
 HTTP; las respuestas parciales fallidas no se guardan en el historial.
 `GET /health` identifica el proveedor activo; no comprueba que Ollama siga disponible.
 
-Este primer paso es conversación. El modo directo no ofrece herramientas, MCP ni
-el control del PC heredado. No se modificó la configuración de wake word, las
-ventanas de grabación ni el tiempo de silencio. La próxima fase puede abordar
-esas funciones. La URL privada de Tailscale configurada anteriormente sigue
-apuntando al gateway OpenClaw independiente, no a este backend de voz.
+En modo remoto, el cliente ejecuta las herramientas y detecta candidatos de
+"Solobino" con ONNX. El backend confirma cada candidato con Whisper. La URL
+privada de Tailscale configurada anteriormente sigue apuntando al gateway
+OpenClaw independiente, no a este backend de voz.
 
 Para volver temporalmente a OpenClaw, detener primero el backend actual y ejecutar:
 
@@ -48,6 +51,7 @@ El launcher se niega a usar un backend activo de otro proveedor.
 ```powershell
 .\voice-backend\venv\Scripts\python.exe -m unittest discover -s tests -v
 node --test desktop-ui/test-streaming.cjs
+node --test desktop-ui/test-wake.cjs
 ```
 
 Las pruebas cubren streaming antes del final, historial limitado y aislado,

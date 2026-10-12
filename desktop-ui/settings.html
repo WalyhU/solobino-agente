@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Conectar Solobino</title>
+  <style>
+    body { font: 15px system-ui, sans-serif; margin: 28px; color: #25243a; background: #f8f5ff; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    p { color: #57546c; line-height: 1.4; }
+    label { display: block; font-weight: 600; margin-top: 18px; }
+    input { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #c9c3df; border-radius: 8px; font: inherit; }
+    button { margin-top: 22px; padding: 10px 18px; border: 0; border-radius: 8px; background: #6949af; color: white; font: inherit; cursor: pointer; }
+    #error { color: #aa1941; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Conectar Solobino</h1>
+  <p>Introduce la dirección y el token del servicio de Solobino. En otra PC o Mac usa una conexión segura <code>wss://</code>.</p>
+  <form id="form">
+    <label>Dirección WebSocket<input id="backendUrl" type="url" placeholder="wss://servidor.example/ws" required></label>
+    <label>Token de acceso<input id="token" type="password" autocomplete="off" required></label>
+    <button type="submit">Guardar y abrir</button>
+    <p id="error" role="alert"></p>
+  </form>
+  <script src="settings.js"></script>
+</body>
+</html>

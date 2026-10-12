@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 
 # Hacer importable features.py del proyecto del modelo.
-_MODEL_DIR = Path(__file__).resolve().parent.parent / "wakeword-model"
+_MODEL_DIR = (Path(sys._MEIPASS) if getattr(sys, "frozen", False)
+              else Path(__file__).resolve().parent.parent) / "wakeword-model"
 if str(_MODEL_DIR) not in sys.path:
     sys.path.insert(0, str(_MODEL_DIR))
 
@@ -100,6 +101,13 @@ class WakeWordDetector:
             return 0.0
 
         samples = self._load_audio(audio_bytes)
+        return self.score_samples(samples)
+
+    def score_samples(self, samples: np.ndarray) -> float:
+        """Evalúa PCM mono float32 a 16 kHz sin decodificar un contenedor."""
+        if not self.available:
+            return 0.0
+        samples = np.asarray(samples, dtype=np.float32)
         if len(samples) == 0:
             return 0.0
 

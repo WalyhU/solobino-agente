@@ -1,29 +1,22 @@
-# Animaciones Chilemorron 🐾
+# Cliente Solobino
 
-Aplicación en Electron con una mascota animada interactiva.
+Aplicación Electron para Windows y macOS. Captura el micrófono, muestra la mascota
+y ejecuta las acciones locales solicitadas por el backend. El usuario instala un
+solo paquete; Python y las herramientas van incluidos en el instalador.
 
-## Funciones
-- Animaciones: idle, react, thinking, music, cry, dance
-- Reacciones al mouse
+Consulta [INSTALACION.md](../INSTALACION.md) para configurar el backend y descargar
+los paquetes `.exe` y `.dmg` creados por GitHub Actions.
 
-## Instalación
-crear una carpeta
-npm init -y
-npm install electron --save-dev
+## Desarrollo
 
-Para iniciarlo escribir el siguiente comando en consola
+```sh
+# Desde la raíz del repositorio: crea voice-backend/venv e instala
+# desktop-ui/client-requirements.txt en ese entorno.
+cd desktop-ui
+npm ci
 npm start
+```
 
-Ojo
-verificar que package.json se encuentre de la siguiente forma.
-{
-  "name": "mascota-asistente",
-  "version": "1.0.0",
-  "main": "main.js",
-  "scripts": {
-    "start": "electron ."
-  },
-  "devDependencies": {
-    "electron": "^latest"
-  }
-}
+Al primer inicio, introduce la URL WebSocket del servicio y su token. La app
+guarda el token cifrado con el almacén seguro del sistema. El menú de Solobino o
+el clic derecho sobre la mascota abren la configuración después.

@@ -1,9 +1,15 @@
 # Entornos virtuales Python
 **/venv/
 **/venv-train/
+/.client-build-venv/
 
 # Dependencias Node
 **/node_modules/
+/desktop-ui/bin/
+/desktop-ui/dist/
+/desktop-ui/.builder-cache/
+/build/
+/solobino-tools.spec
 
 # Cache Python
 **/__pycache__/
@@ -21,7 +27,6 @@ wakeword-model/data/
 wakeword-model/*.pt
 
 # Archivos de raíz que no forman parte del entregable
-/README.md
 /prompt-presentacion.md
 /start-gateway.ps1
 /design/

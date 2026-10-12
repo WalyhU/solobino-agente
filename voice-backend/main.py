@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import re
+import secrets
 import tempfile
 import time
 import unicodedata
@@ -66,6 +67,7 @@ from mcp_client import MCPToolset
 from tools import ToolRunner
 from wakeword_infer import WakeWordDetector
 from local_agent import OllamaAgent
+from remote_tools import RemoteToolset
 
 # `features.load_audio` (de wakeword-model/) decodifica webm/opus a PCM mono float32 a 16 kHz
 # usando PyAV. Lo reusamos como gate de energía para descartar segmentos silenciosos
@@ -127,9 +129,8 @@ mcp_tools = MCPToolset()
 # `available` es False y se usa Whisper + regex como fallback.
 wake_detector = WakeWordDetector()
 
-# Anti-rebote: no dispares el wake más de una vez cada N segundos.
+# Anti-rebote por cliente: no dispares el wake más de una vez cada N segundos.
 WAKE_COOLDOWN_S = float(os.getenv("WAKE_COOLDOWN_S", "8.0"))
-_last_wake_ts = 0.0
 
 # Umbral RMS (float32 normalizado, rango ~[0,1]) por debajo del cual ignoramos un
 # segmento como silencio/ruido y NO lo transcribimos ni inferimos.
@@ -139,16 +140,6 @@ WAKE_VOICE_RMS = float(os.getenv("WAKE_VOICE_RMS", "0.012"))
 # wake si el texto contiene "solobino". Mata casi todos los falsos positivos de
 # una CNN poco generalizada a costa de ~150-300 ms extra.
 WAKEWORD_REQUIRE_STT_CONFIRM = os.getenv("WAKEWORD_REQUIRE_STT_CONFIRM", "true").strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _wake_allowed() -> bool:
-    """True si pasó el cooldown desde el último disparo (evita disparos en ráfaga)."""
-    global _last_wake_ts
-    now = time.monotonic()
-    if now - _last_wake_ts < WAKE_COOLDOWN_S:
-        return False
-    _last_wake_ts = now
-    return True
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -190,12 +181,10 @@ def _normalize_text(text: str) -> str:
 # ("sólo vino", "sola pino", "solo fino") y disparaba el wake sin que hablaras.
 _WAKE_WORD_RE = re.compile(r"\bsol[oa]\s*bin[oa]\b")
 
-# "solobino" no es palabra real: aun con hotwords, Whisper a veces la castea a
-# "solo vino" / "se lo vino" / "sorrino". Como respaldo medimos cercanía fonética
-# (ratio de difflib) de la transcripción —pegada sin espacios— contra el target.
-# Umbral alto para no disparar con "solo vino" dicho en una frase normal.
+# Umbral conservador: 0.82 aceptaba "solo vino" (similitud 0.875) como wake.
+# Se prefieren variantes exactas y se deja una tolerancia mínima a Whisper.
 _WAKE_TARGETS = ("solobino", "solabina")
-_WAKE_FUZZY_RATIO = float(os.getenv("WAKE_FUZZY_RATIO", "0.82"))
+_WAKE_FUZZY_RATIO = float(os.getenv("WAKE_FUZZY_RATIO", "0.90"))
 
 
 def _is_wake_word(text: str) -> bool:
@@ -953,6 +942,11 @@ local_agent = OllamaAgent(
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    if os.getenv("SOLOBINO_CLIENT_TOKEN") and AGENT_PROVIDER != "ollama":
+        raise RuntimeError("El servicio remoto requiere AGENT_PROVIDER=ollama para ejecutar herramientas en el cliente.")
+    if os.getenv("SOLOBINO_HOST", "127.0.0.1") not in {"127.0.0.1", "localhost", "::1"}:
+        if not os.getenv("SOLOBINO_CLIENT_TOKEN"):
+            raise RuntimeError("SOLOBINO_CLIENT_TOKEN es obligatorio al exponer el servicio en red.")
     openclaw_task = None
     if AGENT_PROVIDER == "openclaw":
         openclaw_task = asyncio.create_task(openclaw_client.start())
@@ -962,10 +956,11 @@ async def lifespan(app: FastAPI):
             print(f"[Ollama] Modelo listo: {local_agent.model}")
         except Exception as e:
             print(f"[Ollama] No se pudo precargar el modelo: {e}")
-        # Indexar aquí evita pagar el escaneo en la primera orden del usuario.
-        with contextlib.suppress(Exception):
-            await asyncio.to_thread(app_index.entries)
-        await mcp_tools.start()
+        # En modo servicio las herramientas pertenecen al cliente instalado.
+        if not os.getenv("SOLOBINO_CLIENT_TOKEN"):
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(app_index.entries)
+            await mcp_tools.start()
 
     try:
         yield
@@ -1008,10 +1003,44 @@ def save_audio_chunk(data: bytes) -> str:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    print("Electron client connected.")
+    await websocket.accept()
     history = []
     local_task = None
+    remote_tools = None
+    last_wake_ts = 0.0
+
+    def wake_allowed() -> bool:
+        nonlocal last_wake_ts
+        now = time.monotonic()
+        if now - last_wake_ts < WAKE_COOLDOWN_S:
+            return False
+        last_wake_ts = now
+        return True
+
+    client_token = os.getenv("SOLOBINO_CLIENT_TOKEN", "")
+    if client_token:
+        try:
+            async with asyncio.timeout(10):
+                hello = await websocket.receive_json()
+            if (not isinstance(hello, dict) or hello.get("type") != "client_hello"
+                    or not secrets.compare_digest(str(hello.get("token", "")), client_token)):
+                await websocket.close(code=1008)
+                return
+            offered = hello.get("tools")
+            if not isinstance(offered, list) or len(offered) > 100:
+                await websocket.close(code=1008)
+                return
+            specs = [spec for spec in offered if isinstance(spec, dict)
+                     and isinstance(spec.get("function"), dict)
+                     and isinstance(spec["function"].get("name"), str)]
+            paths = hello.get("paths")
+            paths = [item for item in paths[:10] if isinstance(item, str) and len(item) < 1000] if isinstance(paths, list) else []
+            remote_tools = RemoteToolset(websocket, specs, paths)
+        except (Exception, asyncio.TimeoutError):
+            await websocket.close(code=1008)
+            return
+    manager.active_connections.append(websocket)
+    print("Electron client connected.")
 
     async def local_command(audio):
         try:
@@ -1023,7 +1052,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({"type": "agent_error", "text": "No escuché un comando. Inténtalo de nuevo."})
                     return
                 await websocket.send_json({"type": "transcription", "text": text})
-                await local_agent.reply(text, history, websocket.send_json)
+                if remote_tools is None:
+                    await local_agent.reply(text, history, websocket.send_json)
+                else:
+                    await local_agent.reply(text, history, websocket.send_json,
+                                            remote_tools=remote_tools)
         except WebSocketDisconnect:
             return
         except asyncio.CancelledError:
@@ -1079,6 +1112,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if not isinstance(data, dict):
                     continue
+
+                if data.get("type") == "client_hello" and not client_token:
+                    offered = data.get("tools")
+                    if isinstance(offered, list) and len(offered) <= 100:
+                        specs = [spec for spec in offered if isinstance(spec, dict)
+                                 and isinstance(spec.get("function"), dict)
+                                 and isinstance(spec["function"].get("name"), str)]
+                        paths = data.get("paths")
+                        paths = [item for item in paths[:10] if isinstance(item, str) and len(item) < 1000] if isinstance(paths, list) else []
+                        remote_tools = RemoteToolset(websocket, specs, paths)
+                    continue
+
+                if data.get("type") == "tool_result" and remote_tools is not None:
+                    remote_tools.resolve(data)
+                    continue
                 if data.get("type") == "cancel" and AGENT_PROVIDER == "ollama":
                     if local_task and not local_task.done():
                         local_task.cancel()
@@ -1093,12 +1141,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not audio_b64:
                         continue
 
+                    candidate_id = data.get("candidate_id")
+                    if not isinstance(candidate_id, str) or len(candidate_id) > 64:
+                        candidate_id = None
+                    async def reject_candidate() -> None:
+                        if candidate_id:
+                            await websocket.send_json({"type": "wake_word_rejected",
+                                                       "candidate_id": candidate_id})
+
                     audio_bytes = base64.b64decode(audio_b64)
 
                     # Gate de energía: si no hay voz audible, no transcribimos ni
                     # inferimos. Evita falsos positivos por alucinación de Whisper
                     # sobre silencio y carga inútil de CPU/GPU.
                     if not _segment_has_voice(audio_bytes):
+                        await reject_candidate()
                         continue
 
                     if wake_detector.available and WAKEWORD_USE_CNN:
@@ -1109,10 +1166,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             )
                             print(f"[WakeWord-CNN] prob={prob:.3f} (umbral={wake_detector.threshold:.3f})")
                             if not detected:
+                                await reject_candidate()
                                 continue
-                            if not _wake_allowed():
-                                continue
-
                             # Doble check: la CNN puede tener falsos positivos por
                             # overfit del dataset pequeño. Antes de notificar al frontend,
                             # transcribe con Whisper y confirma que sí dijo "solobino".
@@ -1125,11 +1180,16 @@ async def websocket_endpoint(websocket: WebSocket):
                                 norm = _normalize_text(text) if text else ""
                                 if _is_hallucination(text) or not _is_wake_word(text):
                                     print(f"[WakeWord-CNN] Rechazado por STT (prob={prob:.3f}, heard={norm!r})")
+                                    await reject_candidate()
                                     continue
                                 print(f"[WakeWord-CNN] Confirmado por STT: {text!r}")
 
+                            if not wake_allowed():
+                                await reject_candidate()
+                                continue
                             print(f"[WakeWord-CNN] Detected (prob={prob:.3f})")
-                            await manager.broadcast_json({"type": "wake_word_detected"})
+                            await websocket.send_json({"type": "wake_word_detected",
+                                                       "candidate_id": candidate_id})
                         except Exception as e:
                             print(f"Wake word (CNN) error: {e}")
                     else:
@@ -1140,21 +1200,26 @@ async def websocket_endpoint(websocket: WebSocket):
                             if text:
                                 print(f"[WakeWord] Heard: {text!r} -> norm: {_normalize_text(text)!r}")
                             if _is_hallucination(text):
+                                await reject_candidate()
                                 continue
-                            if _is_wake_word(text) and _wake_allowed():
+                            if _is_wake_word(text) and wake_allowed():
                                 print(f"[WakeWord] Detected: {text}")
-                                await manager.broadcast_json({"type": "wake_word_detected"})
+                                await websocket.send_json({"type": "wake_word_detected",
+                                                           "candidate_id": candidate_id})
+                            else:
+                                await reject_candidate()
                         except Exception as e:
                             print(f"Wake word error: {e}")
 
                 # Fallback for manual agentic commands from UI directly.
                 elif data.get("action") == "control_pc":
                     # Pasa por la misma validación que las herramientas del modelo.
-                    result = await tool_runner.run(
+                    executor = remote_tools.call if remote_tools is not None else tool_runner.run
+                    result = await executor(
                         data.get("command"),
                         data.get("params", {}),
                     )
-                    await manager.broadcast_json(
+                    await websocket.send_json(
                         {"type": "agent_response", "text": result}
                     )
 
@@ -1166,6 +1231,8 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error: {e}")
         manager.disconnect(websocket)
     finally:
+        if remote_tools is not None:
+            remote_tools.close()
         if local_task and not local_task.done():
             local_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1179,8 +1246,8 @@ if __name__ == "__main__":
     # margen para evitar cierres por ping perdido en redes lentas.
     uvicorn.run(
         app,
-        host="127.0.0.1",
-        port=8000,
+        host=os.getenv("SOLOBINO_HOST", "127.0.0.1"),
+        port=int(os.getenv("SOLOBINO_PORT", "8000")),
         ws_ping_interval=20,
         ws_ping_timeout=60,
     )

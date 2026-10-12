@@ -74,9 +74,12 @@ Genera en esta carpeta:
 
 ## 4. Usar en el backend
 
-No hay que hacer nada más: al arrancar, `voice-backend/wakeword_infer.py` busca
-`wakeword.onnx` en esta carpeta. Si existe, el backend lo usa para el wake-word
-(log `[WakeWord-CNN] Modelo cargado`); si no, cae a Whisper + regex.
+`voice-backend/wakeword_infer.py` busca `wakeword.onnx` en esta carpeta. El
+instalador del cliente incluye el modelo y evalúa ventanas de audio solapadas
+en Windows y macOS; el backend confirma con Whisper los candidatos. Si el
+detector local no carga, el cliente vuelve al detector remoto. Para usar la CNN
+también en el backend, configura `WAKEWORD_USE_CNN=true`; por defecto allí se
+usa Whisper.
 
 Para reentrenar (más datos u otra palabra), repite los pasos y reinicia el backend.
 
@@ -85,6 +88,10 @@ Para reentrenar (más datos u otra palabra), repite los pasos y reinicia el back
 - **Demasiados falsos positivos**: graba más negativos y sube el umbral en
   `wakeword_meta.json` (p. ej. 0.6–0.7).
 - **No detecta la voz**: graba más positivos y reentrena.
+- **Calibración del cliente**: el umbral efectivo tiene un mínimo de 0.70 y
+  una ventana requiere 0.82 de confianza, o dos ventanas consecutivas al
+  umbral mínimo. Cada candidato requiere confirmación textual de Whisper.
+  Prueba con voces y micrófonos que no estén en el conjunto de entrenamiento.
 - **Cambiar de palabra**: regraba positivos diciendo la palabra nueva y reentrena
   (el modelo no depende del texto, solo del sonido).
 

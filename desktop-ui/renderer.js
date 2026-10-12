@@ -1,4 +1,3 @@
-const { ipcRenderer } = require('electron');
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Sprites — el mapeo remapea las carpetas (sus nombres engañan).
@@ -344,6 +343,8 @@ function restAfterTalk() {
 const wakePill = document.getElementById("wake-pill");
 const wakePillText = document.getElementById("wake-pill-text");
 let ws = null;
+let wakeLocalAvailable = false;
+let wakeCandidate = null;
 // Blob de comando pendiente cuando el WS estaba cerrado al terminar de grabar.
 // Se reenvía en el próximo ws.onopen para no perder la orden del usuario.
 let pendingCommandBlob = null;
@@ -353,10 +354,21 @@ function setWakePill(connected) {
   wakePillText.innerText = connected ? 'ESCUCHANDO "SOLOBINO"' : "DESCONECTADO";
 }
 
-function connectWebSocket() {
-  ws = new WebSocket("ws://127.0.0.1:8000/ws");
+async function connectWebSocket() {
+  let clientInfo;
+  try {
+    clientInfo = await window.solobino.getClientInfo();
+    wakeLocalAvailable = clientInfo.wakeAvailable === true;
+    ws = new WebSocket(clientInfo.backendUrl);
+  } catch (error) {
+    showAgentError(`No pude configurar la conexión: ${error.message}`);
+    setTimeout(connectWebSocket, 3000);
+    return;
+  }
 
   ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "client_hello", token: clientInfo.token,
+      tools: clientInfo.tools, paths: clientInfo.paths }));
     setWakePill(true);
     if (pendingCommandBlob) {
       // Reenviar la orden que quedó en el aire por una caída momentánea del WS.
@@ -372,7 +384,18 @@ function connectWebSocket() {
     let data;
     try { data = JSON.parse(event.data); } catch { return; }
 
-    if (data.type === "transcription") {
+    if (data.type === "tool_request") {
+      window.solobino.runTool(data).then((text) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "tool_result", id: data.id, text }));
+        }
+      }).catch((error) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "tool_result", id: data.id,
+            text: `Error: ${error.message}` }));
+        }
+      });
+    } else if (data.type === "transcription") {
       console.log("[Solobino] escuchado:", data.text);
       streamingBuf = "";
       setState("think");
@@ -396,7 +419,16 @@ function connectWebSocket() {
     } else if (data.type === "agent_error") {
       showAgentError(data.text || "No pude completar la respuesta.");
     } else if (data.type === "wake_word_detected") {
+      if (wakeCandidate && data.candidate_id === wakeCandidate.id) {
+        console.log(`[WakeWord] confirmación=${Math.round(performance.now() - wakeCandidate.at)}ms`);
+        wakeCandidate = null;
+      }
       activate();
+    } else if (data.type === "wake_word_rejected") {
+      if (wakeCandidate && data.candidate_id === wakeCandidate.id) {
+        console.log('[WakeWord] candidato local rechazado por Whisper');
+        wakeCandidate = null;
+      }
     }
   };
 
@@ -581,20 +613,102 @@ function stopCommandRecording() {
   if (isRecording && mediaRecorder) mediaRecorder.stop();
 }
 
-// Escucha continua: graba SEGMENTOS webm completos de ~3s para el wake-word.
+// El modelo local escucha PCM continuo; WebM remoto queda como respaldo.
 const WAKE_SEGMENT_MS = 3000;
 let continuousStream = null;
 let continuousActive = false;
 let segmentRecorder = null;
+let wakeContext = null;
+let wakeSource = null;
+let wakeNode = null;
+let wakeEpoch = 0;
+let wakeProbeBusy = false;
+let wakeHits = 0;
+let wakeHitAt = 0;
+let wakeProbeFrames = 0;
+let wakeLastCandidateAt = -Infinity;
 
 async function startContinuousListening() {
   if (continuousActive || isRecording) return;
+  continuousActive = true;
+  const epoch = ++wakeEpoch;
   try {
-    continuousStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    continuousActive = true;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!continuousActive || epoch !== wakeEpoch) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    continuousStream = stream;
+    if (wakeLocalAvailable) {
+      try {
+        wakeContext = new AudioContext();
+        await wakeContext.audioWorklet.addModule('wake-worklet.js');
+        if (!continuousActive || epoch !== wakeEpoch) return;
+        const buffer = new WakeAudioBuffer(wakeContext.sampleRate, 2);
+        wakeSource = wakeContext.createMediaStreamSource(continuousStream);
+        wakeNode = new AudioWorkletNode(wakeContext, 'wake-capture');
+        wakeNode.port.onmessage = ({ data }) => {
+          if (!continuousActive || epoch !== wakeEpoch) return;
+          buffer.append(data);
+          wakeProbeFrames += data.length;
+          if (wakeProbeFrames >= wakeContext.sampleRate / 4 && !wakeProbeBusy) {
+            wakeProbeFrames = 0;
+            const window = buffer.recent(1);
+            if (window) probeLocalWake(buffer, window, epoch);
+          }
+        };
+        wakeSource.connect(wakeNode);
+        wakeNode.connect(wakeContext.destination);
+        await wakeContext.resume();
+        return;
+      } catch (error) {
+        console.error('[WakeWord] Detector local no disponible:', error);
+        wakeLocalAvailable = false;
+        stopLocalWake();
+      }
+    }
     recordWakeSegment();
   } catch (err) {
     console.error("Escucha continua:", err);
+    continuousActive = false;
+  }
+}
+
+async function probeLocalWake(buffer, audioWindow, epoch) {
+  wakeProbeBusy = true;
+  try {
+    const pcm = wakePcmBase64(resampleWake(audioWindow, 16000));
+    const result = await window.solobino.scoreWake(pcm);
+    if (!continuousActive || epoch !== wakeEpoch) return;
+    if (result.available === false) {
+      wakeLocalAvailable = false;
+      stopLocalWake();
+      recordWakeSegment();
+      return;
+    }
+    const now = performance.now();
+    if (result.score < result.threshold) {
+      wakeHits = 0;
+      return;
+    }
+    wakeHits = now - wakeHitAt <= 750 ? wakeHits + 1 : 1;
+    wakeHitAt = now;
+    // Una sola ventana necesita confianza alta; dos ventanas solapadas
+    // permiten captar pronunciaciones más suaves sin subir falsos positivos.
+    if ((result.score < 0.82 && wakeHits < 2) || now - wakeLastCandidateAt < 2000) return;
+    wakeHits = 0;
+    const clip = buffer.recent(1.5) || buffer.recent(1);
+    if (!clip || !ws || ws.readyState !== WebSocket.OPEN) return;
+    wakeLastCandidateAt = now;
+    const id = `${Date.now()}-${Math.random()}`;
+    wakeCandidate = { id, at: now };
+    const clipSamples = Math.round(clip.length * 16000 / buffer.sampleRate);
+    ws.send(JSON.stringify({ type: 'wake_word_check', candidate_id: id,
+      audio: wakeWavBase64(resampleWake(clip, clipSamples)) }));
+  } catch (error) {
+    console.error('[WakeWord] Inferencia local:', error);
+  } finally {
+    wakeProbeBusy = false;
   }
 }
 
@@ -624,12 +738,22 @@ function recordWakeSegment() {
 
 function stopContinuousListening() {
   continuousActive = false;
+  wakeEpoch++;
+  wakeHits = 0;
+  wakeProbeFrames = 0;
+  stopLocalWake();
   if (segmentRecorder && segmentRecorder.state === "recording") segmentRecorder.stop();
   segmentRecorder = null;
   if (continuousStream) {
     continuousStream.getTracks().forEach((t) => t.stop());
     continuousStream = null;
   }
+}
+
+function stopLocalWake() {
+  if (wakeNode) { wakeNode.port.onmessage = null; wakeNode.disconnect(); wakeNode = null; }
+  if (wakeSource) { wakeSource.disconnect(); wakeSource = null; }
+  if (wakeContext) { wakeContext.close(); wakeContext = null; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -675,8 +799,8 @@ mascotEl.addEventListener("click", () => {
 
 // Click-through: solo el overlay y la wake-pill capturan el mouse.
 [soloRoot, wakePill].forEach((el) => {
-  el.addEventListener("mouseenter", () => ipcRenderer.send("set-ignore-mouse-events", false));
-  el.addEventListener("mouseleave", () => ipcRenderer.send("set-ignore-mouse-events", true, { forward: true }));
+  el.addEventListener("mouseenter", () => window.solobino.setIgnoreMouseEvents(false));
+  el.addEventListener("mouseleave", () => window.solobino.setIgnoreMouseEvents(true, { forward: true }));
 });
 
 // ─────────────────────────────────────────────────────────────────────────

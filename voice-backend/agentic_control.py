@@ -65,11 +65,11 @@ class PCController:
         abría una segunda ventana vacía, y `os.startfile` abría el archivo con el
         programa predeterminado en vez de con el pedido.
         """
-        if os.name != "nt":
-            raise NotImplementedError("Solo se admite Windows en esta versión.")
         if IS_MACOS:
             mac_desktop.open_file_with(entry.target, path)
             return
+        if os.name != "nt":
+            raise NotImplementedError("Sistema no admitido.")
         if not entry.executable:
             raise RuntimeError(
                 f"{entry.label} no admite abrir archivos desde fuera; "

@@ -1,0 +1,5 @@
+httpx>=0.28,<1
+pyinstaller>=6,<7
+numpy>=2,<3
+onnxruntime>=1.22,<2
+pyautogui>=0.9.54; sys_platform == "win32"
