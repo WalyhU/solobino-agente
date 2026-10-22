@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 
 import numpy as np
+import httpx
 
 def _register_cuda_dll_dirs() -> None:
     """En Windows, faster-whisper/CTranslate2 necesitan las DLLs de cuBLAS/cuDNN/cudart
@@ -1044,7 +1045,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def local_command(audio):
         try:
-            async with asyncio.timeout(45):
+            async with asyncio.timeout(180):
                 started = time.perf_counter()
                 text = await _transcribe_async(audio, "es")
                 print(f"[Voice] STT={time.perf_counter() - started:.3f}s")
@@ -1063,8 +1064,14 @@ async def websocket_endpoint(websocket: WebSocket):
             raise
         except Exception as e:
             print(f"[Ollama] Turn failed: {type(e).__name__}: {e}")
+            if isinstance(e, (TimeoutError, httpx.TimeoutException)):
+                message = "El modelo local tardó demasiado en responder. Inténtalo de nuevo."
+            elif isinstance(e, httpx.ConnectError):
+                message = "No pude conectar con Ollama. Comprueba que esté iniciado."
+            else:
+                message = "No pude completar la respuesta local. Revisa el servicio Solobino."
             with contextlib.suppress(Exception):
-                await websocket.send_json({"type": "agent_error", "text": "No pude completar la respuesta local. Comprueba que Ollama esté iniciado e inténtalo otra vez."})
+                await websocket.send_json({"type": "agent_error", "text": message})
 
     try:
         while True:

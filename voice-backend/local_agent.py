@@ -31,7 +31,7 @@ class OllamaAgent:
         self.model = model
         self.client = httpx.AsyncClient(
             base_url=base_url.rstrip('/'),
-            timeout=httpx.Timeout(20, connect=5),
+            timeout=httpx.Timeout(120, connect=5),
             transport=transport,
         )
         self.tools = tool_runner if tool_runner is not None else ToolRunner()

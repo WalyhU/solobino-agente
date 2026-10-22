@@ -481,7 +481,7 @@ function armResponseWatchdog() {
   responseWatchdog = setTimeout(() => {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "cancel" }));
     showAgentError("La respuesta tardó demasiado. Inténtalo de nuevo.");
-  }, 25000);
+  }, 120000);
 }
 
 function activate() {
