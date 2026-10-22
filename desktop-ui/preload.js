@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('solobino', {
   getConfig: () => ipcRenderer.invoke('solobino:config'),
   getClientInfo: () => ipcRenderer.invoke('solobino:client-info'),
+  requestMicAccess: () => ipcRenderer.invoke('solobino:mic-access'),
   saveConfig: (config) => ipcRenderer.invoke('solobino:save-config', config),
   runTool: (request) => ipcRenderer.invoke('solobino:run-tool', request),
   scoreWake: (pcm) => ipcRenderer.invoke('solobino:score-wake', pcm),

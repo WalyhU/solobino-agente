@@ -34,6 +34,9 @@ async function wakeRenderer(scoreResult) {
     WebSocket: { OPEN: 1 }, performance, Date, Math, btoa,
     console: { error() {} }, fallback: 0,
     navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{stop() {}}] }) } },
+    openMicrophone: async () => ({ getTracks: () => [{stop() {}}] }),
+    setWakePill() {},
+    showMicrophoneError(error) { throw error; },
     AudioContext: class {
       sampleRate = 16000;
       audioWorklet = { addModule: async () => {} };

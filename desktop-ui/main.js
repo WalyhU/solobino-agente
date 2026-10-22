@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, screen, safeStorage, session } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, screen, safeStorage, session, systemPreferences } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -137,8 +137,12 @@ function openSettings() {
 }
 
 app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(permission === 'media' && webContents === win?.webContents);
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    return permission === 'media' && webContents === win?.webContents;
+  });
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(permission === 'media' && webContents === win?.webContents &&
+      details.mediaTypes?.includes('audio') === true);
   });
   startHelper();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -157,6 +161,11 @@ app.on('activate', () => { if (!win) { if (readConfig().backendUrl) createWindow
 ipcMain.handle('solobino:config', () => readConfig());
 ipcMain.handle('solobino:client-info', async () => ({ ...readConfig(), tools: await helperReady,
   paths: helperPaths, wakeAvailable }));
+ipcMain.handle('solobino:mic-access', async (event) => {
+  if (event.sender !== win?.webContents) return false;
+  if (process.platform !== 'darwin') return true;
+  return systemPreferences.askForMediaAccess('microphone');
+});
 ipcMain.handle('solobino:save-config', (_event, config) => {
   saveConfig(config);
   if (win) win.reload(); else createWindow();

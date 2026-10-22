@@ -349,9 +349,27 @@ let wakeCandidate = null;
 // Se reenvía en el próximo ws.onopen para no perder la orden del usuario.
 let pendingCommandBlob = null;
 
-function setWakePill(connected) {
-  wakePill.classList.toggle("paused", !connected);
-  wakePillText.innerText = connected ? 'ESCUCHANDO "SOLOBINO"' : "DESCONECTADO";
+function setWakePill(connected, microphoneReady = true) {
+  wakePill.classList.toggle("paused", !connected || !microphoneReady);
+  wakePillText.innerText = !connected ? "DESCONECTADO" :
+    microphoneReady ? 'ESCUCHANDO "SOLOBINO"' : "MICRÓFONO NO DISPONIBLE";
+}
+
+async function openMicrophone() {
+  if (!await window.solobino.requestMicAccess()) {
+    throw new DOMException('Permiso de micrófono denegado', 'NotAllowedError');
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: true });
+}
+
+function showMicrophoneError(error) {
+  console.error('[Micrófono]', error);
+  setWakePill(true, false);
+  const denied = error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError';
+  const message = denied
+    ? 'Autoriza el micrófono para Solobino en Ajustes del Sistema y reinicia la app.'
+    : `No pude abrir el micrófono (${error.name || 'error'}). Revisa la entrada de audio de tu equipo.`;
+  setState('error', { text: message });
 }
 
 async function connectWebSocket() {
@@ -369,7 +387,7 @@ async function connectWebSocket() {
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: "client_hello", token: clientInfo.token,
       tools: clientInfo.tools, paths: clientInfo.paths }));
-    setWakePill(true);
+    setWakePill(true, false);
     if (pendingCommandBlob) {
       // Reenviar la orden que quedó en el aire por una caída momentánea del WS.
       ws.send(pendingCommandBlob);
@@ -514,7 +532,8 @@ let streamingBuf = "";
 async function startCommandRecording() {
   if (isRecording) return;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await openMicrophone();
+    setWakePill(true);
     const opts = MediaRecorder.isTypeSupported(REC_OPTS.mimeType) ? REC_OPTS : { mimeType: "audio/webm" };
     mediaRecorder = new MediaRecorder(stream, opts);
     audioChunks = [];
@@ -547,8 +566,7 @@ async function startCommandRecording() {
     // Cap duro por si nunca se detecta silencio.
     commandTimer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, COMMAND_MAX_MS);
   } catch (err) {
-    console.error("Error micrófono:", err);
-    setState("error");
+    showMicrophoneError(err);
   }
 }
 
@@ -633,12 +651,13 @@ async function startContinuousListening() {
   continuousActive = true;
   const epoch = ++wakeEpoch;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await openMicrophone();
     if (!continuousActive || epoch !== wakeEpoch) {
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
     continuousStream = stream;
+    setWakePill(true);
     if (wakeLocalAvailable) {
       try {
         wakeContext = new AudioContext();
@@ -669,7 +688,7 @@ async function startContinuousListening() {
     }
     recordWakeSegment();
   } catch (err) {
-    console.error("Escucha continua:", err);
+    showMicrophoneError(err);
     continuousActive = false;
   }
 }
