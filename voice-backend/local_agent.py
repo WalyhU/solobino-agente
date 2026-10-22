@@ -1,6 +1,7 @@
 """Cliente conversacional de Ollama con ejecución de herramientas locales."""
 import asyncio
 import json
+import os
 import time
 
 import httpx
@@ -46,9 +47,13 @@ class OllamaAgent:
                 "Carpetas disponibles: " + ", ".join(paths) + ".")
 
     def _body(self, messages, with_tools=True, remote_tools=None):
+        options = dict(num_ctx=8192, num_predict=256, temperature=0.3)
+        num_gpu = os.getenv("OLLAMA_NUM_GPU")
+        if num_gpu is not None:
+            options["num_gpu"] = int(num_gpu)
         body = dict(model=self.model, messages=messages, think=False, stream=True,
                     keep_alive="15m",
-                    options=dict(num_ctx=8192, num_predict=256, temperature=0.3))
+                    options=options)
         if with_tools:
             body['tools'] = (remote_tools.specs() if remote_tools else
                              TOOL_SPECS + (self.mcp.specs() if self.mcp else []))
