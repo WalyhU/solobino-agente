@@ -18,7 +18,11 @@ COPY voice-backend/ voice-backend/
 COPY wakeword-model/features.py wakeword-model/wakeword.onnx wakeword-model/wakeword_meta.json wakeword-model/
 
 # Usuario sin privilegios dentro del contenedor.
-RUN useradd --create-home solobino && chown -R solobino /app
+# La carpeta de caché debe existir con este dueño: así el volumen nombrado
+# hereda los permisos y Whisper puede descargar el modelo.
+RUN useradd --create-home solobino \
+ && mkdir -p /home/solobino/.cache/huggingface \
+ && chown -R solobino /app /home/solobino/.cache
 USER solobino
 
 EXPOSE 8000
