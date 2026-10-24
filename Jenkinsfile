@@ -50,8 +50,14 @@ pipeline {
     stage('SonarCloud') {
       when { expression { params.RUN_SONAR } }
       steps {
-        withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
-          sh 'sonar -Dsonar.host.url=https://sonarcloud.io -Dsonar.token="$SONAR_TOKEN" -Dsonar.qualitygate.wait=true'
+        script {
+          try {
+            withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
+              sh 'sonar -Dsonar.host.url=https://sonarcloud.io -Dsonar.token="$SONAR_TOKEN" -Dsonar.qualitygate.wait=true'
+            }
+          } catch (org.jenkinsci.plugins.credentialsbinding.impl.CredentialNotFoundException e) {
+            echo 'No existe la credencial SONAR_TOKEN: se omite SonarCloud (ver CALIDAD.md, paso 3).'
+          }
         }
       }
     }

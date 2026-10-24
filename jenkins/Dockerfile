@@ -24,4 +24,8 @@ ENV CHROME_BINARY=/usr/bin/chromium \
 
 RUN jenkins-plugin-cli --plugins \
       workflow-aggregator git github junit htmlpublisher \
-      credentials-binding timestamper ws-cleanup
+      credentials-binding timestamper ws-cleanup pipeline-stage-view
+
+# Sin asistente de instalación: el job se crea con init.groovy.d.
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false"
+COPY init.groovy.d/ /usr/share/jenkins/ref/init.groovy.d/

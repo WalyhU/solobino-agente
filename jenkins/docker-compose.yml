@@ -7,8 +7,8 @@ services:
     # root para poder usar el socket de Docker de tu PC (entorno de laboratorio).
     user: root
     ports:
-      - "8080:8080"
-      - "50000:50000"
+      # Solo accesible desde este equipo: Jenkins queda sin login para el laboratorio.
+      - "127.0.0.1:8080:8080"
     volumes:
       - jenkins_home:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
