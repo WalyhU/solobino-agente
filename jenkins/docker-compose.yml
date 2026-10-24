@@ -1,0 +1,21 @@
+# Levanta Jenkins en tu PC: docker compose -f jenkins/docker-compose.yml up -d --build
+# Luego abre http://localhost:8080
+services:
+  jenkins:
+    build: .
+    container_name: jenkins
+    # root para poder usar el socket de Docker de tu PC (entorno de laboratorio).
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      # Permite que las pruebas lleguen al sandbox publicado en tu PC (puerto 8000).
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  jenkins_home:

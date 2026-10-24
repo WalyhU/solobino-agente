@@ -30,3 +30,10 @@ wakeword-model/*.pt
 /prompt-presentacion.md
 /start-gateway.ps1
 /design/
+
+# Salidas del pipeline de calidad
+/reports/
+/coverage.xml
+/.coverage
+/.venv/
+.pytest_cache/

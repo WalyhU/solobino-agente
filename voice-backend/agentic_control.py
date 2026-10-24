@@ -17,7 +17,10 @@ if IS_MACOS:
 
     pyautogui = None
 else:
-    import pyautogui
+    try:
+        import pyautogui
+    except Exception:  # Linux/servidor sin pantalla (Docker, CI): sin control de teclado.
+        pyautogui = None
 
     mac_desktop = None
 
@@ -38,6 +41,9 @@ class PCController:
             entry = params["entry"]
             self._launch(entry)
             return f"Abrí {entry.label}."
+
+        if action in ("press_key", "type_text") and not IS_MACOS and pyautogui is None:
+            raise NotImplementedError("Control de teclado no disponible en este sistema.")
 
         if action == "press_key":
             key = params["key"]

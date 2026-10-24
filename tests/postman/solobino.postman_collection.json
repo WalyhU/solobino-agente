@@ -1,0 +1,79 @@
+{
+  "info": {
+    "name": "Solobino API",
+    "description": "Pruebas de la API HTTP del backend de Solobino. El WebSocket /ws se prueba aparte (Newman no ejecuta WebSockets): ver tests/integration/test_ws_sandbox.py.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000" }
+  ],
+  "item": [
+    {
+      "name": "Health - servicio disponible",
+      "request": { "method": "GET", "url": "{{baseUrl}}/health" },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+          "pm.test('Responde en menos de 1 s', () => pm.expect(pm.response.responseTime).to.be.below(1000));",
+          "pm.test('Content-Type es JSON', () => pm.response.to.have.header('Content-Type', 'application/json'));",
+          "const body = pm.response.json();",
+          "pm.test('status es ok', () => pm.expect(body.status).to.eql('ok'));",
+          "pm.test('agent_provider es válido', () => pm.expect(body.agent_provider).to.be.oneOf(['ollama', 'openclaw']));",
+          "pm.test('model es un texto no vacío', () => pm.expect(body.model).to.be.a('string').and.not.empty);",
+          "pm.test('Cumple el esquema', () => pm.response.to.have.jsonSchema({",
+          "  type: 'object',",
+          "  required: ['status', 'agent_provider', 'model'],",
+          "  properties: { status: {type: 'string'}, agent_provider: {type: 'string'}, model: {type: 'string'} }",
+          "}));"
+        ]}
+      }]
+    },
+    {
+      "name": "Health - CORS permite al cliente Electron",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Origin", "value": "file://" }],
+        "url": "{{baseUrl}}/health"
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+          "pm.test('Incluye cabecera CORS', () => pm.response.to.have.header('Access-Control-Allow-Origin'));"
+        ]}
+      }]
+    },
+    {
+      "name": "Health - método no permitido (POST)",
+      "request": { "method": "POST", "url": "{{baseUrl}}/health" },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('Responde 405', () => pm.response.to.have.status(405));"
+        ]}
+      }]
+    },
+    {
+      "name": "Ruta inexistente",
+      "request": { "method": "GET", "url": "{{baseUrl}}/no-existe" },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+          "pm.test('No filtra detalles internos', () => pm.expect(pm.response.text()).to.not.include('Traceback'));"
+        ]}
+      }]
+    },
+    {
+      "name": "WebSocket /ws por HTTP plano (rechazado)",
+      "request": { "method": "GET", "url": "{{baseUrl}}/ws" },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('No acepta HTTP plano en /ws', () => pm.expect(pm.response.code).to.be.oneOf([400, 403, 404, 426]));"
+        ]}
+      }]
+    }
+  ]
+}
