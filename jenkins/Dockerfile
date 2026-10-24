@@ -1,5 +1,5 @@
 # Jenkins con todo lo que necesita el pipeline de Solobino:
-# Python (pruebas + cobertura), Node (Newman, SonarScanner), Chromium (Selenium)
+# Python (pruebas + cobertura), Node (Newman), Chromium (Selenium)
 # y el cliente de Docker (para levantar el sandbox con el Docker de tu PC).
 FROM jenkins/jenkins:lts-jdk21
 
@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && echo "deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
        > /etc/apt/sources.list.d/docker.list \
   && apt-get update && apt-get install -y docker-ce-cli docker-compose-plugin \
-  && npm install -g newman newman-reporter-htmlextra @sonar/scan \
+  && npm install -g newman newman-reporter-htmlextra \
   && rm -rf /var/lib/apt/lists/*
 
 # Chromium y su driver vienen del mismo paquete de Debian: versiones compatibles.

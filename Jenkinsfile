@@ -1,5 +1,5 @@
 // Pipeline de calidad de Solobino:
-// pruebas unitarias + cobertura -> SonarCloud -> sandbox Docker -> Postman/Newman
+// pruebas unitarias + cobertura -> sandbox Docker -> Postman/Newman
 // -> integración WebSocket -> Selenium. Pensado para jenkins/docker-compose.yml.
 pipeline {
   agent any
@@ -10,9 +10,6 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '15'))
   }
 
-  parameters {
-    booleanParam(name: 'RUN_SONAR', defaultValue: true, description: 'Enviar análisis a SonarCloud (requiere la credencial SONAR_TOKEN)')
-  }
 
   environment {
     VENV = "${WORKSPACE}/.venv"
@@ -47,20 +44,6 @@ pipeline {
       }
     }
 
-    stage('SonarCloud') {
-      when { expression { params.RUN_SONAR } }
-      steps {
-        script {
-          try {
-            withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
-              sh 'sonar -Dsonar.host.url=https://sonarcloud.io -Dsonar.token="$SONAR_TOKEN" -Dsonar.qualitygate.wait=true'
-            }
-          } catch (org.jenkinsci.plugins.credentialsbinding.impl.CredentialNotFoundException e) {
-            echo 'No existe la credencial SONAR_TOKEN: se omite SonarCloud (ver CALIDAD.md, paso 3).'
-          }
-        }
-      }
-    }
 
     stage('Levantar sandbox') {
       steps {

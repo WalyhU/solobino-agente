@@ -4,7 +4,6 @@
 |---|---|---|
 | **Sandbox (Docker)** | Levanta el backend aislado, en CPU y sin GPU | `Dockerfile`, `docker-compose.yml`, `.env.sandbox` |
 | **Pruebas unitarias** | 52 pruebas existentes + cobertura | `tests/test_*.py`, `.coveragerc` |
-| **SonarCloud** | Análisis estático: bugs, code smells, cobertura, Quality Gate | `sonar-project.properties` |
 | **Postman / Newman** | Pruebas de la API HTTP (13 aserciones) | `tests/postman/solobino.postman_collection.json` |
 | **Integración WebSocket** | Autenticación de `/ws` con token (Newman no soporta WebSocket) | `tests/integration/test_ws_sandbox.py` |
 | **Selenium** | 9 pruebas de la ventana de configuración del cliente | `tests/selenium/test_settings_ui.py` |
@@ -31,14 +30,7 @@ pip install -r voice-backend/requirements.txt pytest pytest-cov selenium
 python -m pytest tests --ignore=tests/selenium --ignore=tests/integration --cov --cov-report=xml:coverage.xml
 ```
 
-## Paso 3 — SonarCloud (necesita tu cuenta)
-
-1. Entra a https://sonarcloud.io con GitHub → **+ → Analyze new project** → elige `solobino-agente`.
-2. Copia la **Project Key** y la **Organization Key** que te muestre y ponlas en `sonar-project.properties`.
-3. En el proyecto: **Administration → Analysis Method** → desactiva **Automatic Analysis** (el análisis lo hará Jenkins).
-4. **My Account → Security → Generate Token** → guárdalo; lo usarás en Jenkins (paso 6).
-
-## Paso 4 — Postman
+## Paso 3 — Postman
 
 1. Postman → **Import** → `tests/postman/solobino.postman_collection.json`.
 2. Con el sandbox encendido, clic derecho en la colección → **Run collection** → 13 pruebas en verde.
@@ -51,7 +43,7 @@ npm i -g newman newman-reporter-htmlextra
 newman run tests/postman/solobino.postman_collection.json -r cli,htmlextra
 ```
 
-## Paso 5 — Selenium y WebSocket (local)
+## Paso 4 — Selenium y WebSocket (local)
 
 ```bash
 python -m pytest tests/selenium -v          # abre Chrome headless; capturas en reports/selenium/
@@ -61,33 +53,27 @@ python -m pytest tests/integration -v
 ```
 Necesitas Google Chrome instalado; Selenium descarga solo el ChromeDriver correcto.
 
-## Paso 6 — Jenkins
+## Paso 5 — Jenkins
 
-1. Levanta Jenkins (ya trae Python, Node, Chromium, Newman, SonarScanner y Docker CLI):
-   ```bash
-   docker compose -f jenkins/docker-compose.yml up -d --build
-   docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
-   ```
-2. Abre http://localhost:8080, pega la contraseña, elige **Install suggested plugins** y crea tu usuario.
-3. **Manage Jenkins → Credentials → System → Global → Add Credentials**
-   - Kind: **Secret text** · Secret: *tu token de SonarCloud* · ID: **`SONAR_TOKEN`**
-4. **New Item** → nombre `solobino-calidad` → **Pipeline** →
-   Definition: **Pipeline script from SCM** · SCM: **Git** · URL del repo · Branch: `*/main` · Script Path: `Jenkinsfile`.
-5. **Build Now**. Si aún no configuras SonarCloud, usa **Build with Parameters** y desmarca `RUN_SONAR`.
+```bash
+docker compose -f jenkins/docker-compose.yml up -d --build
+```
+La imagen ya trae Python, Node, Chromium, Newman, los plugins y el cliente de Docker. Al arrancar,
+Jenkins **crea solo** el job `solobino-calidad` (rama `calidad-software`) y lanza la primera ejecución:
+no hay asistente de instalación ni contraseña. Por eso solo escucha en `127.0.0.1:8080`
+(accesible únicamente desde tu PC).
 
-Ejecutar en cada push (opcional): en el job marca **GitHub hook trigger for GITScm polling** y en GitHub
-**Settings → Webhooks** agrega `http://<tu-url-publica>/github-webhook/` (por ejemplo con `ngrok http 8080`).
-Sin URL pública, usa **Poll SCM** con `H/5 * * * *`.
+Abre http://localhost:8080/job/solobino-calidad/ y usa **Build Now** para volver a ejecutarlo.
+Antes, apaga el sandbox manual (`docker compose down`): el pipeline levanta el suyo en el puerto 8000.
 
 ### Etapas del pipeline
-`Checkout → Preparar entorno → Pruebas unitarias + cobertura → SonarCloud → Levantar sandbox → API Postman/Newman → Integración WebSocket → UI Selenium`
+`Checkout → Preparar entorno → Pruebas unitarias + cobertura → Levantar sandbox → API Postman/Newman → Integración WebSocket → UI Selenium`
 Al terminar publica los resultados JUnit, el **Reporte Postman** (HTML), las capturas de Selenium y el log del sandbox.
 
 ---
 
 ## Evidencias sugeridas para la entrega
 - Jenkins: **Stage View** con todas las etapas en verde y la pestaña **Test Result**.
-- SonarCloud: dashboard con Quality Gate, bugs, vulnerabilidades, code smells y cobertura.
 - Postman: resultado del **Collection Runner** y la conexión WebSocket.
 - Selenium: capturas en `reports/selenium/` (o en los artefactos del build).
 

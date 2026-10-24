@@ -12,7 +12,7 @@ def name   = 'solobino-calidad'
 def jenkins = Jenkins.get()
 if (jenkins.getItem(name) == null) {
   def job = jenkins.createProject(WorkflowJob, name)
-  job.setDescription('Pipeline de calidad: pruebas, SonarCloud, sandbox Docker, Postman, WebSocket y Selenium.')
+  job.setDescription('Pipeline de calidad: pruebas, sandbox Docker, Postman, WebSocket y Selenium.')
   def scm = new GitSCM(GitSCM.createRepoList(repo, null), [new BranchSpec(branch)], null, null, [])
   def definition = new CpsScmFlowDefinition(scm, 'Jenkinsfile')
   definition.setLightweight(true)
